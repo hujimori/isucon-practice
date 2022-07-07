@@ -15,7 +15,6 @@ func main() {
 		wg.Add(1)
 		go test(i, &wg)
 	}
-	fmt
 
 	fmt.Printf("CPUのコア数: %v\n", runtime.NumCPU())
 	fmt.Printf("Goroutineの数: %v\n", runtime.NumGoroutine())
