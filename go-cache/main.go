@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -45,7 +46,7 @@ type Comment struct {
 }
 
 var db *sqlx.DB
-var rd *redis.Client
+var rdb *redis.Client
 
 func main() {
 
@@ -55,7 +56,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	rd = redis.NewClient(&redis.Options{
+	rdb = redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
 		Password: "",
 		DB:       0,
@@ -67,18 +68,54 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// キャッシュなし
+
+	fmt.Println("1回目")
 	for _, p := range results {
-		getUser(p.UserID)
+		p.User = getUser(p.UserID)
+		fmt.Printf("[%d] %v\n", p.ID, p.User)
+	}
+
+	fmt.Println("2回目")
+	// キャッシュあり
+	for _, p := range results {
+		p.User = getUser(p.UserID)
+		fmt.Printf("[%d] %v\n", p.ID, p.User)
 	}
 }
 
-func getUser(id int) {
-	// user := User{}
+func getUser(id int) User {
+	// 参考
+	// https://selfnote.work/20210719/programming/golang/golang-redis/
+	var user User
 
 	var ctx = context.Background()
+	key := strconv.Itoa(id)
+	it, err := rdb.Get(ctx, key).Result()
 
-	it, err := rd.Get(ctx, strconv.Itoa(id)).Result()
 	if err == nil {
-		fmt.Printf("%v", it)
+		err = json.Unmarshal([]byte(it), &user)
+		fmt.Printf("hit! %v\n", id)
+		if err != nil {
+			return user
+		}
 	}
+
+	err = db.Get(&user, "SELECT * FROM `users` WHERE `id` = ?", id)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	j, err := json.Marshal(user)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = rdb.Set(ctx, key, j, redis.KeepTTL).Result()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return user
+
 }
