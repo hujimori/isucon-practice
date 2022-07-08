@@ -73,15 +73,31 @@ func main() {
 	fmt.Println("1回目")
 	for _, p := range results {
 		p.User = getUser(p.UserID)
-		fmt.Printf("[%d] %v\n", p.ID, p.User)
+		// fmt.Printf("[%d] %v\n", p.ID, p.User)
 	}
 
 	fmt.Println("2回目")
 	// キャッシュあり
+
+	ids := make([]int, len(results))
 	for _, p := range results {
 		p.User = getUser(p.UserID)
-		fmt.Printf("[%d] %v\n", p.ID, p.User)
+		ids = append(ids, p.UserID)
+		// fmt.Printf("[%d] %v\n", p.UserID, p.User)
 	}
+
+	// fmt.Printf("%v\n", ids)
+
+	fmt.Println("3回目")
+	var u []User
+	defer func() {
+		u = getUserList(ids)
+	}()
+	fmt.Println(u)
+
+	// for _, u := range users {
+	// fmt.Printf("[%d] %v\n", u.ID, u)
+	// }
 }
 
 func getUser(id int) User {
@@ -95,8 +111,9 @@ func getUser(id int) User {
 
 	if err == nil {
 		err = json.Unmarshal([]byte(it), &user)
-		fmt.Printf("hit! %v\n", id)
-		if err != nil {
+		if err == nil {
+			fmt.Printf("hit! %v\n", id)
+
 			return user
 		}
 	}
@@ -117,5 +134,57 @@ func getUser(id int) User {
 	}
 
 	return user
+
+}
+
+func getUserList(ids []int) []User {
+	var ctx = context.Background()
+
+	users := make([]User, len(ids))
+	// its := make([]bytes, len(ids))
+	pipe := rdb.Pipeline()
+	m := map[string]*redis.StringCmd{}
+	for _, id := range ids {
+
+		m[strconv.Itoa(id)] = pipe.Get(ctx, strconv.Itoa(id))
+		// u := User{}
+		// if err == nil {
+		// 	err = json.Unmarshal([]byte(it), &u)
+		// 	if err == nil {
+		// 		users = append(users, u)
+		// 	}
+		// }
+
+	}
+
+	_, err := pipe.Exec(ctx)
+	fmt.Println(err)
+
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+
+	fmt.Println(len(m))
+
+	for _, v := range m {
+		res, _ := v.Result()
+		fmt.Println(res)
+
+		u := User{}
+		if err == nil {
+			err = json.Unmarshal([]byte(res), &u)
+			if err == nil {
+				users = append(users, u)
+			}
+		}
+
+	}
+
+	// pipe.Exec(ctx)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+
+	return users
 
 }
