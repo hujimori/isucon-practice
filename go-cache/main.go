@@ -15,12 +15,12 @@ import (
 )
 
 type User struct {
-	ID          int       `db:"id"`
-	AccountName string    `db:"account_name"`
-	Passhash    string    `db:"passhash"`
-	Authority   int       `db:"authority"`
-	DelFlg      int       `db:"del_flg"`
-	CreatedAt   time.Time `db:"created_at"`
+	ID          int       `db:"id" redis:"id"`
+	AccountName string    `db:"account_name" redis:"account_name"`
+	Passhash    string    `db:"passhash" redis:"passhash"`
+	Authority   int       `db:"authority" redis:"authority"`
+	DelFlg      int       `db:"del_flg" redis:"del_flg"`
+	CreatedAt   time.Time `db:"created_at" redis:"created_at"`
 }
 
 type Post struct {
@@ -68,36 +68,26 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// キャッシュなし
+	ctx := context.Background()
+	rdb.FlushAll(ctx)
 
+	// キャッシュなし
 	fmt.Println("1回目")
 	for _, p := range results {
 		p.User = getUser(p.UserID)
-		// fmt.Printf("[%d] %v\n", p.ID, p.User)
 	}
 
-	fmt.Println("2回目")
-	// キャッシュあり
-
+	fmt.Println("キャッシュから読み込み")
 	ids := make([]int, len(results))
 	for _, p := range results {
 		p.User = getUser(p.UserID)
 		ids = append(ids, p.UserID)
-		// fmt.Printf("[%d] %v\n", p.UserID, p.User)
 	}
 
-	// fmt.Printf("%v\n", ids)
-
-	fmt.Println("3回目")
-	var u []User
-	defer func() {
-		u = getUserList(ids)
-	}()
+	fmt.Println("一気に読み込む")
+	u := getUserList(ids)
 	fmt.Println(u)
 
-	// for _, u := range users {
-	// fmt.Printf("[%d] %v\n", u.ID, u)
-	// }
 }
 
 func getUser(id int) User {
@@ -106,16 +96,13 @@ func getUser(id int) User {
 	var user User
 
 	var ctx = context.Background()
-	key := strconv.Itoa(id)
-	it, err := rdb.Get(ctx, key).Result()
+
+	user, err := getUserFromCache(ctx, id)
 
 	if err == nil {
-		err = json.Unmarshal([]byte(it), &user)
-		if err == nil {
-			fmt.Printf("hit! %v\n", id)
+		fmt.Printf("[Cache hit] %v\n", user)
+		return user
 
-			return user
-		}
 	}
 
 	err = db.Get(&user, "SELECT * FROM `users` WHERE `id` = ?", id)
@@ -123,15 +110,8 @@ func getUser(id int) User {
 		log.Fatal(err)
 	}
 
-	j, err := json.Marshal(user)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	_, err = rdb.Set(ctx, key, j, redis.KeepTTL).Result()
-	if err != nil {
-		log.Fatal(err)
-	}
+	fmt.Printf("[DB hit] %v\n", user)
+	setUserToCache(ctx, user)
 
 	return user
 
@@ -140,51 +120,75 @@ func getUser(id int) User {
 func getUserList(ids []int) []User {
 	var ctx = context.Background()
 
-	users := make([]User, len(ids))
-	// its := make([]bytes, len(ids))
+	users := make([]User, 0, len(ids))
+
 	pipe := rdb.Pipeline()
 	m := map[string]*redis.StringCmd{}
 	for _, id := range ids {
 
 		m[strconv.Itoa(id)] = pipe.Get(ctx, strconv.Itoa(id))
-		// u := User{}
-		// if err == nil {
-		// 	err = json.Unmarshal([]byte(it), &u)
-		// 	if err == nil {
-		// 		users = append(users, u)
-		// 	}
-		// }
 
 	}
 
-	_, err := pipe.Exec(ctx)
-	fmt.Println(err)
+	pipe.Exec(ctx)
 
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	fmt.Println(len(m))
-
-	for _, v := range m {
-		res, _ := v.Result()
-		fmt.Println(res)
+	for _, c := range m {
+		v, err := c.Result()
 
 		u := User{}
 		if err == nil {
-			err = json.Unmarshal([]byte(res), &u)
+			err = json.Unmarshal([]byte(v), &u)
 			if err == nil {
 				users = append(users, u)
 			}
 		}
-
 	}
-
-	// pipe.Exec(ctx)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
 
 	return users
 
+}
+
+func getUserFromCache(ctx context.Context, id int) (User, error) {
+
+	var u User
+
+	_, err := rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+
+		v, err := rdb.Get(ctx, strconv.Itoa(id)).Result()
+
+		if err != nil {
+			return err
+		}
+
+		err = json.Unmarshal([]byte(v), &u)
+		if err != nil {
+			return err
+		}
+
+		return nil
+
+	})
+
+	return u, err
+}
+
+func setUserToCache(ctx context.Context, u User) {
+
+	j, err := json.Marshal(u)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if _, err := rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+
+		_, err = rdb.Set(ctx, strconv.Itoa(u.ID), j, redis.KeepTTL).Result()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		return nil
+
+	}); err != nil {
+		log.Fatal(err)
+	}
 }
