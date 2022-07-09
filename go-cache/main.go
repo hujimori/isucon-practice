@@ -15,12 +15,12 @@ import (
 )
 
 type User struct {
-	ID          int       `db:"id" redis:"id"`
-	AccountName string    `db:"account_name" redis:"account_name"`
-	Passhash    string    `db:"passhash" redis:"passhash"`
-	Authority   int       `db:"authority" redis:"authority"`
-	DelFlg      int       `db:"del_flg" redis:"del_flg"`
-	CreatedAt   time.Time `db:"created_at" redis:"created_at"`
+	ID          int       `db:"id"`
+	AccountName string    `db:"account_name"`
+	Passhash    string    `db:"passhash"`
+	Authority   int       `db:"authority"`
+	DelFlg      int       `db:"del_flg"`
+	CreatedAt   time.Time `db:"created_at"`
 }
 
 type Post struct {
