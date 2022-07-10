@@ -15,12 +15,18 @@ import (
 )
 
 type User struct {
-	ID          int       `db:"id"`
-	AccountName string    `db:"account_name"`
-	Passhash    string    `db:"passhash"`
-	Authority   int       `db:"authority"`
-	DelFlg      int       `db:"del_flg"`
-	CreatedAt   time.Time `db:"created_at"`
+	ID          int       `db:"id" redis:"id"`
+	AccountName string    `db:"account_name" redis:"account_name"`
+	Passhash    string    `db:"passhash" redis:"passhash"`
+	Authority   int       `db:"authority" redis:"authority"`
+	DelFlg      int       `db:"del_flg" redis:"del_flg"`
+	CreatedAt   time.Time `db:"created_at" redis:"created_at"`
+}
+
+type Member struct {
+	ID          int       `json:"id"`
+	AccountName string    `json:"name"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type Post struct {
@@ -85,9 +91,77 @@ func main() {
 	}
 
 	fmt.Println("一気に読み込む")
-	u := getUserList(ids)
-	fmt.Println(u)
+	users := getUserList(ids)
+	// for _, u := range users {
+	// 	fmt.Printf("%v\n", u)
+	// }
 
+	for _, u := range users {
+		setUserScore(&u)
+	}
+
+	rankings, _ := getRankingsByIdAndCreatedAt()
+	fmt.Printf("%d件\n", len(rankings))
+	fmt.Println("降順")
+	for _, r := range rankings {
+		fmt.Printf("%v\n", r)
+	}
+
+	fmt.Println("昇順")
+	for i := len(rankings) - 1; i > -1; i-- {
+		fmt.Printf("%v\n", rankings[i])
+	}
+
+}
+
+func setUserScore(u *User) error {
+
+	m := Member{
+		ID:          u.ID,
+		AccountName: u.AccountName,
+		CreatedAt:   u.CreatedAt,
+	}
+
+	j, err := json.Marshal(&m)
+	if err != nil {
+		return err
+	}
+
+	if err := rdb.ZAdd(context.Background(), "rankings", redis.Z{
+		Score:  float64(u.ID),
+		Member: j,
+	}).Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func getRankingsByIdAndCreatedAt() ([]Member, error) {
+	rankings, err := rdb.ZRevRangeByScoreWithScores(
+		context.Background(),
+		"rankings",
+		&redis.ZRangeBy{
+			Min:    "-inf",
+			Max:    "+inf",
+			Offset: 0,
+			Count:  10,
+		}).Result()
+
+	if err != nil {
+		return nil, err
+	}
+
+	members := make([]Member, 0, len(rankings))
+	for _, r := range rankings {
+		var m Member
+
+		if err := json.Unmarshal([]byte(r.Member.(string)), &m); err != nil {
+			return nil, err
+		}
+		members = append(members, m)
+	}
+
+	return members, nil
 }
 
 func getUser(id int) User {
